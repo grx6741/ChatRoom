@@ -1,15 +1,14 @@
-#include "steam/isteammatchmaking.h"
 #include <cstring>
 #include <iostream>
 #include <string>
 #include <vector>
 
-#include <steam/steam_api.h>
+#include <steam_api.h>
 
-#include <raylib/raylib.h>
+#include <raylib.h>
 
 #define RAYGUI_IMPLEMENTATION
-#include <raylib/raygui.h>
+#include <raygui.h>
 
 #define APP_ID 480
 #define MAX_CHATMSG_SIZE 1024 * 4
@@ -128,13 +127,13 @@ void Screen::renderLoading() {
 }
 
 void Screen::renderOutsideLobby() {
-    if ( GuiButton( (Rectangle) {0, 0, 300, 50}, "Create Lobby" ) ) {
+    if ( GuiButton( Rectangle {0, 0, 300, 50}, "Create Lobby" ) ) {
         screen_state = eScreenState::LOBBY_CREATION;
     }
-    if ( GuiButton( (Rectangle) {0, 100, 300, 50}, "Join Lobby" ) ) {
+    if ( GuiButton( Rectangle {0, 100, 300, 50}, "Join Lobby" ) ) {
         screen_state = eScreenState::LOBBY_JOIN;
     }
-    if ( GuiButton( (Rectangle) {0, 200, 300, 50}, "Quit" ) ) {
+    if ( GuiButton( Rectangle {0, 200, 300, 50}, "Quit" ) ) {
         program.should_quit = true;
     }
 }
@@ -188,7 +187,7 @@ void Screen::renderLobbyJoin() {
     };
 
     if ( GuiTextBox( textbox_bounds, lobby_manager.lobby_id_text_box, 100, true ) || GuiButton( button_bounds, "Join Lobby" )) {
-        if ( strlen( lobby_manager.lobby_name ) > 0 ) {
+        if ( strlen( lobby_manager.lobby_id_text_box) > 0 ) {
             screen_state = eScreenState::LOADING;
             program.loading_screen_text = "Joining Lobby";
 
@@ -240,8 +239,6 @@ void Screen::renderLobby() {
         lobby_manager.SendMessage(SteamFriends()->GetPersonaName(), lobby_manager.chatMsg);
         // Clears the text
     }
-
-    SetClipboardText( TextFormat( "%lld", lobby_manager.id ) );
 }
 
 // Lobby Manager Implementation
@@ -310,6 +307,8 @@ void LobbyManager::OnLobbyCreate( LobbyCreated_t *pCallback, bool bIOFailure ) {
     }
 
     screen_state = eScreenState::LOBBY;
+
+    SetClipboardText( TextFormat( "%lld", lobby_manager.id ) );
 }
 
 void LobbyManager::JoinLobby(uint64 SteamID) {
@@ -353,6 +352,7 @@ void LobbyManager::LeaveLobby() {
     this->id = 0;
     this->lobby_leader.clear();
     this->members.clear();
+    SendMessage("SERVER", TextFormat("%s has Left the lobby", SteamFriends()->GetPersonaName()));
 }
 
 // Call Backs
@@ -361,12 +361,12 @@ void LobbyManager::OnLobbyDataUpdate( LobbyChatUpdate_t *pCallback ) {
     uint64 lobby_id = pCallback->m_ulSteamIDLobby;
     uint64 member_id = pCallback->m_ulSteamIDUserChanged;
 
+    reFillMembersVector();
+
     switch (pCallback->m_rgfChatMemberStateChange) {
         case k_EChatMemberStateChangeEntered:
-            LOG("TODO");
             break;
         case k_EChatMemberStateChangeLeft:
-            LOG("TODO");
             break;
     }
 }
