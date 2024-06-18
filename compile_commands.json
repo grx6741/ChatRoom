@@ -1,0 +1,15 @@
+[
+  {
+    "arguments": [
+      "/usr/bin/g++",
+      "-c",
+      "-I./",
+      "-o",
+      "./bin/main",
+      "main.cpp"
+    ],
+    "directory": "/home/grx/Coding/steam-mp",
+    "file": "/home/grx/Coding/steam-mp/main.cpp",
+    "output": "/home/grx/Coding/steam-mp/bin/main"
+  }
+]
