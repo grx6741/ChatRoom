@@ -1,5 +1,7 @@
+#include "steam/isteammatchmaking.h"
 #include <cstring>
 #include <iostream>
+#include <string>
 #include <vector>
 
 #include <steam/steam_api.h>
@@ -10,6 +12,7 @@
 #include <raylib/raygui.h>
 
 #define APP_ID 480
+#define MAX_CHATMSG_SIZE 1024 * 4
 
 #define LOG( x ) std::cout << ( x ) << std::endl;
 #define MIN( x, y ) ((x) < (y) ? (x) : (y))
@@ -38,14 +41,21 @@ public:
 
 class LobbyManager {
 public:
-    char lobby_name[100];
+    char lobby_name[100]; // text box data, that u type to create a lobby
+    char lobby_id_text_box[200]; // same as above, but u type the id to join an existing id
     std::string lobby_leader;
     std::vector<uint64> members;
+    std::vector<std::string> messages;
+
+    char chatMsg[MAX_CHATMSG_SIZE];
     uint64 id;
 
     void CreateLobby();
     void JoinLobby(uint64 SteamID);
     void LeaveLobby();
+    void SendMessage(std::string sender, std::string msg);
+
+    void reFillMembersVector();
 
 private:
     // call Values
@@ -57,7 +67,8 @@ private:
     CCallResult< LobbyManager, LobbyEnter_t > m_LobbyJoinCallResult;
 
     // Call Backs
-    STEAM_CALLBACK( LobbyManager, OnLobbyDataUpdate, LobbyDataUpdate_t );
+    STEAM_CALLBACK( LobbyManager, OnLobbyDataUpdate, LobbyChatUpdate_t );
+    STEAM_CALLBACK( LobbyManager, OnLobbyMessageRecieved, LobbyChatMsg_t );
 };
 
 static LobbyManager lobby_manager;
@@ -158,14 +169,35 @@ void Screen::renderLobbyCreation() {
 }
 
 void Screen::renderLobbyJoin() {
+    float window_width = GetScreenWidth();
+    float window_height = GetScreenHeight();
 
+    float w = 0.3 * window_width;
+    float h = MIN( 0.1 * window_height, 30 );
+
+    Rectangle textbox_bounds = { 
+        static_cast<float>(0.5 * (window_width - w)),
+        static_cast<float>(0.5 * (window_height - h)), 
+        w, h
+    };
+
+    Rectangle button_bounds = {
+        static_cast<float>(0.5 * (window_width - w)),
+        static_cast<float>(0.5 * (window_height - h)) + 100, 
+        w, h
+    };
+
+    if ( GuiTextBox( textbox_bounds, lobby_manager.lobby_id_text_box, 100, true ) || GuiButton( button_bounds, "Join Lobby" )) {
+        if ( strlen( lobby_manager.lobby_name ) > 0 ) {
+            screen_state = eScreenState::LOADING;
+            program.loading_screen_text = "Joining Lobby";
+
+            lobby_manager.JoinLobby(std::stoull(lobby_manager.lobby_id_text_box));
+        }
+    }
 }
 
 void Screen::renderLobby() {
-    // DrawText( TextFormat( "Lobby ID: %lld", lobby_manager.id ), 100, 100, 32, BLACK );
-    // DrawText( TextFormat( "Lobby Leader: %s", lobby_manager.lobby_leader.c_str() ), 100, 200, 32, BLACK );
-    // DrawText( TextFormat( "Lobby Name: %s", lobby_manager.lobby_name ), 100, 300, 32, BLACK );
-    // DrawText( "Copied Lobby ID to Clip board", 100, GetScreenHeight() - 100, 20, GRAY );
     Rectangle members_panel = {
         0, 0, 
         static_cast<float>( 0.2 * GetScreenWidth() ), 
@@ -179,21 +211,48 @@ void Screen::renderLobby() {
     };
 
     GuiPanel( members_panel, TextFormat( "Online: %d", lobby_manager.members.size() ) );
-    GuiPanel( chat_panel, TextFormat( "%s Lobby: Owned by %s", lobby_manager.lobby_name, lobby_manager.lobby_leader.c_str()) );
     
     float font_height = 20;
     Vector2 padding = {10, 50};
     for (int i = 0; i < lobby_manager.members.size(); i++) {
-        float y_offset = i * font_height;
-
+        float y_offset = i * font_height + 10;
         const char* username = SteamFriends()->GetFriendPersonaName( lobby_manager.members[i] );
         DrawText(username, padding.x, padding.y + y_offset, font_height / 10, BLACK);
+    }
+
+    GuiPanel( chat_panel, TextFormat( "%s Lobby: Owned by %s", lobby_manager.lobby_name, lobby_manager.lobby_leader.c_str()) );
+
+    padding = {chat_panel.x + 20, chat_panel.y + 70};
+    for (int i = 0; i < lobby_manager.messages.size(); i++) {
+        float y_offset = i * font_height + 20;
+        DrawText(lobby_manager.messages[i].c_str(), padding.x, padding.y + y_offset, font_height / 2, BLACK);
+    }
+
+    float chat_box_height = 50;
+    Rectangle chat_box = {
+        chat_panel.x,
+        static_cast<float>(GetScreenHeight() - chat_box_height),
+        chat_panel.width,
+        chat_box_height
+    };
+
+    if ( GuiTextBox(chat_box, lobby_manager.chatMsg, MAX_CHATMSG_SIZE, true) ) {
+        lobby_manager.SendMessage(SteamFriends()->GetPersonaName(), lobby_manager.chatMsg);
+        // Clears the text
     }
 
     SetClipboardText( TextFormat( "%lld", lobby_manager.id ) );
 }
 
 // Lobby Manager Implementation
+
+void LobbyManager::SendMessage( std::string sender, std::string msg ) {
+    const char* full_msg = TextFormat( "[%s]: %s", sender.c_str(), msg.c_str() );
+    TraceLog( LOG_INFO, "%s : %d", full_msg, msg.size() );
+
+    SteamMatchmaking()->SendLobbyChatMsg( lobby_manager.id, full_msg, strlen(full_msg) );
+    std::memset( lobby_manager.chatMsg, 0, strlen(lobby_manager.chatMsg) + 1 );
+}
 
 void LobbyManager::CreateLobby() {
     SteamAPICall_t hSteamAPICall = SteamMatchmaking()->CreateLobby( k_ELobbyTypePublic, 100 );
@@ -258,21 +317,30 @@ void LobbyManager::JoinLobby(uint64 SteamID) {
     m_LobbyJoinCallResult.Set( hSteamAPICall, this, &LobbyManager::OnLobbyJoin );
 }
 
-void LobbyManager::OnLobbyJoin( LobbyEnter_t *pCallback, bool bIOFailure ) {
-    if ( bIOFailure || pCallback->m_EChatRoomEnterResponse == k_EChatRoomEnterResponseError ) {
-        TraceLog(LOG_ERROR, "Coudln't Join Lobby");
-        return;
-    }
-
-    lobby_manager.id = pCallback->m_ulSteamIDLobby;
+void LobbyManager::reFillMembersVector() {
+    lobby_manager.members.clear();
     int nMembers = SteamMatchmaking()->GetNumLobbyMembers( lobby_manager.id );
     for (int i = 0; i < nMembers; i++) {
         lobby_manager.members.push_back( SteamMatchmaking()->GetLobbyMemberByIndex( lobby_manager.id, i ).ConvertToUint64() );
     }
-    lobby_manager.lobby_leader = SteamMatchmaking()->GetLobbyData( lobby_manager.id, "l0bby_leader" );
+}
+
+void LobbyManager::OnLobbyJoin( LobbyEnter_t *pCallback, bool bIOFailure ) {
+    if ( bIOFailure || pCallback->m_EChatRoomEnterResponse == k_EChatRoomEnterResponseError ) {
+        TraceLog(LOG_ERROR, "Couldn't Join Lobby");
+        screen_state = eScreenState::OUTSIDE_LOBBY;
+        return;
+    }
+
+    lobby_manager.id = pCallback->m_ulSteamIDLobby;
+    lobby_manager.lobby_leader = SteamMatchmaking()->GetLobbyData( lobby_manager.id, "lobby_leader" );
     strncpy( lobby_manager.lobby_name, SteamMatchmaking()->GetLobbyData( lobby_manager.id, "lobby_leader" ), 100 );
 
+    reFillMembersVector();
+    messages.clear();
+
     TraceLog(LOG_INFO, "Joined Lobby %lld", lobby_manager.id);
+    SendMessage("SERVER", TextFormat("%s has Joined the lobby", SteamFriends()->GetPersonaName()));
     screen_state = eScreenState::LOBBY;
 }
 
@@ -289,18 +357,33 @@ void LobbyManager::LeaveLobby() {
 
 // Call Backs
 
-void LobbyManager::OnLobbyDataUpdate( LobbyDataUpdate_t *pCallback ) {
+void LobbyManager::OnLobbyDataUpdate( LobbyChatUpdate_t *pCallback ) {
     uint64 lobby_id = pCallback->m_ulSteamIDLobby;
-    uint64 member_id = pCallback->m_ulSteamIDMember;
+    uint64 member_id = pCallback->m_ulSteamIDUserChanged;
 
-    if (lobby_id == member_id) {
-        // Lobby Changed
-        int nMembers = SteamMatchmaking()->GetNumLobbyMembers( lobby_id );
-        if (nMembers != lobby_manager.members.size()) {
-            // User joined or left
-        }
+    switch (pCallback->m_rgfChatMemberStateChange) {
+        case k_EChatMemberStateChangeEntered:
+            LOG("TODO");
+            break;
+        case k_EChatMemberStateChangeLeft:
+            LOG("TODO");
+            break;
+    }
+}
+
+void LobbyManager::OnLobbyMessageRecieved( LobbyChatMsg_t *pCallback ) {
+    if ( pCallback->m_eChatEntryType == 0 ) {
+        TraceLog(LOG_ERROR, "Invalid Message recieved");
         return;
     }
-    
-    // User changed
+
+    uint32 chatID = pCallback->m_iChatID;
+    uint64 lobbyID = pCallback->m_ulSteamIDLobby;
+    CSteamID sender = pCallback->m_ulSteamIDUser;
+
+    char recievedMsg[MAX_CHATMSG_SIZE];
+    int end = SteamMatchmaking()->GetLobbyChatEntry( lobbyID, chatID, &sender, recievedMsg, MAX_CHATMSG_SIZE, NULL);
+    recievedMsg[end] = '\0';
+
+    messages.push_back(recievedMsg);
 }
